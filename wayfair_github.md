@@ -1,7 +1,12 @@
-Some Assembly Required: Unpacking the Content and Spread of Wayfair
-Conspiracy Theory on Reddit and Twitter
+Supplementary Material: Some Assembly Required: Unpacking the Content
+and Spread of Wayfair Conspiracy Theory on Reddit and Twitter
 ================
 22 May, 2025
+
+Citation: Walter, D., Lokmanoglu, A., Ophir, Y., & Fabregat, E. (2025).
+Some Assembly Required: Unpacking the Content and Spread of Wayfair
+Conspiracy Theory on Reddit and Twitter. *New Media and Society*.
+<http://dx.doi.org/10.1177/14614448251341497>
 
 ## 1. Setup & Libraries
 

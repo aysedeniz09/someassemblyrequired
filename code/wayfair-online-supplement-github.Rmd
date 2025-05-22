@@ -1,6 +1,5 @@
 ---
-title: "Some Assembly Required: Unpacking the Content and Spread of Wayfair Conspiracy Theory on Reddit and Twitter"
-subtitle: "Supplementary Material: Online Supplement Code"
+title: "Supplementary Material: Online Supplement Code"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: github_document
 always_allow_html: true
@@ -8,6 +7,8 @@ editor_options:
   markdown: 
     wrap: 72
 ---
+
+Citation: Walter, D., Lokmanoglu, A., Ophir, Y., & Fabregat, E. (2025).  Some Assembly Required: Unpacking the Content and Spread of Wayfair Conspiracy Theory on Reddit and Twitter. *New Media and Society*. http://dx.doi.org/10.1177/14614448251341497
 
 
 ```{r setup, include=FALSE}

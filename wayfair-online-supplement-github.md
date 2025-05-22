@@ -1,7 +1,11 @@
-Some Assembly Required: Unpacking the Content and Spread of Wayfair
-Conspiracy Theory on Reddit and Twitter
+Supplementary Material: Online Supplement Code
 ================
 22 May, 2025
+
+Citation: Walter, D., Lokmanoglu, A., Ophir, Y., & Fabregat, E. (2025).
+Some Assembly Required: Unpacking the Content and Spread of Wayfair
+Conspiracy Theory on Reddit and Twitter. *New Media and Society*.
+<http://dx.doi.org/10.1177/14614448251341497>
 
 ``` r
 # --- Data Wrangling & Manipulation ---
@@ -90,7 +94,7 @@ rm(list = ls())
 ## Vector Autoregressive Analysis (VAR)
 
 ``` r
-load("DATA/Data_for_Github.Rdata")
+load("data/Data_for_Github.Rdata")
 ```
 
 ``` r
