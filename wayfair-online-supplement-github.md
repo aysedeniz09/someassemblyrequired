@@ -1,0 +1,1300 @@
+Some Assembly Required: Unpacking the Content and Spread of Wayfair
+Conspiracy Theory on Reddit and Twitter
+================
+22 May, 2025
+
+``` r
+# --- Data Wrangling & Manipulation ---
+library(dplyr)       # Core data manipulation functions
+library(tidyverse)   # Includes ggplot2, tibble, tidyr, etc.
+library(lubridate)   # Date/time handling (e.g., floor_date)
+library(tidyr)       # Pivoting and reshaping data
+library(stringr)     # String manipulation
+
+# --- Visualization ---
+library(ggplot2)     # Core plotting library
+library(ggthemes)    # Clean themes like theme_hc()
+library(scales)      # Formatting axes (e.g., date breaks, commas)
+
+# --- Time Series Analysis ---
+library(forecast)    # ndiffs() for stationarity check
+library(tseries)     # adf.test() for Augmented Dickey-Fuller test
+library(dynlm)       # Dynamic linear models (used for cointegration)
+library(vars)        # Vector autoregression (VAR), impulse response functions
+
+# --- Reporting & Export ---
+library(modelsummary) # Neatly formatted regression/VAR tables
+library(openxlsx)     # Writing Excel files (e.g., for tables)
+```
+
+## SUPPLEMENT A
+
+## Topic Modeling
+
+``` r
+topic_labels <- openxlsx::read.xlsx("YOLabels.xlsx") ## your own topword dataframe with human coder labels
+topics_labels2 <- topic_labels
+topics_labels2[1] <- NULL
+topics_labels2 <- topics_labels2[-1, ]
+topics_labels3 <- topics_labels2[1:10, ]
+topics_labels3 <- janitor::clean_names(topics_labels3)
+
+topics_labels3 <- topics_labels3 |> 
+  t() |> 
+  as.tibble() |>
+  tibble::rownames_to_column()
+
+new_colnames <- colnames(topic_labels)[-1]
+new_colnames <- gsub("\\.", " ", new_colnames)
+topics_labels3$rowname <- new_colnames
+df <- unite(topics_labels3, "top_words", -1, sep = "; ", remove = FALSE, na.rm = TRUE)
+df <- dplyr::select(df, rowname, top_words)
+df$topic_number <- seq_len(35)
+
+df <- df |> 
+  mutate(antmn = case_when(
+    topic_number %in% c(2, 3, 12, 14, 18, 24, 29, 34) ~ "(1) Moral Outage",
+    topic_number %in% c(4, 8, 17, 20, 25, 27, 28, 31, 32) ~ "(2) Debates and Evidence",
+    topic_number %in% c(5, 13, 22, 26) ~ "(3) Dismissive and Anti-Fact-Checking",
+    topic_number %in% c(6, 9, 21, 23) ~ "(4) Emotional Reactions",
+    TRUE ~ "Delete " 
+  )) |> 
+  relocate(antmn) |> 
+  dplyr::select(-topic_number) |> 
+  arrange(antmn) |> 
+  rename('ANTMN (Louvain)' = 'antmn',
+         'Topic Label' = 'rowname',
+         'Top Words' = 'top_words')
+
+table <- flextable(df)
+table <- theme_vanilla(table)
+table_caption = c("Table S1", "ANTMN Clusters with Corresponding Topic Labels and Top Words")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(list = ls())
+```
+
+## SUPPLEMENT B
+
+## Vector Autoregressive Analysis (VAR)
+
+``` r
+load("DATA/Data_for_Github.Rdata")
+```
+
+``` r
+ts_data <- data |> 
+  mutate(forcount = 1,
+         hour = lubridate::floor_date(date, unit = "hour")) |> 
+  group_by(source, hour) |> 
+  summarise(postcount = sum(forcount)) |> 
+  pivot_wider(names_from = "source",
+              values_from = "postcount")
+
+for (var_name in names(ts_data)[-1]) {
+  series <- ts_data[[var_name]]
+  diff_count <- ndiffs(series)
+  
+  if (diff_count == 0) {
+    print(paste(var_name, "is stationary (ndiffs =", diff_count, ")"))
+  } else {
+    print(paste(var_name, "is not stationary (ndiffs =", diff_count, ")"))
+  }
+}
+rm(diff_count, series, var_name)
+
+ts_data[is.na(ts_data)] <- 0
+ts_data$reddit_diff <- c(NA, diff(ts_data$reddit))
+ts_data$twit_diff <- c(NA, diff(ts_data$twit))
+```
+
+``` r
+acf <- as.data.frame(ts_data$reddit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit Volume")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(ts_data$twit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit Volume")
+rm(acf, acf_print)
+```
+
+``` r
+dat_comm1.1 <- ts_data |>  
+  dplyr::select(reddit_diff, twit_diff) |> 
+  drop_na()
+dat_comm1.1 <- ts(dat_comm1.1)
+
+SC_volume <- VARselect(dat_comm1.1, lag.max = 48, type = "both")[["selection"]][["SC(n)"]]
+
+adf_reddit_vol <- adf.test(dat_comm1.1[,"reddit_diff"], k=SC_volume) 
+adf_twitter_vol <- adf.test(dat_comm1.1[,"twit_diff"], k=SC_volume) 
+coint_vol <- dynlm(reddit_diff ~ twit_diff, data=dat_comm1.1)
+ehat_vol <- resid(coint_vol)
+johtest_vol <- adf.test(ehat_vol, k=SC_volume) 
+fitvarcomm_vol <- VAR(dat_comm1.1, p=SC_volume, type="both")
+
+gc_redvolume <- causality(fitvarcomm_vol, cause = "reddit_diff")
+gc_twittervol <- causality(fitvarcomm_vol, cause = "twit_diff")
+
+irf_comm_twitter_vol <- irf(fitvarcomm_vol, impulse = "reddit_diff", 
+                   response = "twit_diff", boot = TRUE)
+irf_comm_reddit_vol <- irf(fitvarcomm_vol, impulse = "twit_diff", 
+                   response = "reddit_diff", boot = TRUE)
+
+residual_vol <- residuals(fitvarcomm_vol)
+box.test_red_vol <- Box.test(residual_vol[,1], type='Ljung',lag=1)
+box.test_twit_vol <- Box.test(residual_vol[,2], type='Ljung',lag=1)
+```
+
+``` r
+wrangle_data <- function(input_df, columns_to_select) {
+  data_ts <- input_df |> 
+    dplyr::select(date, source, !!!columns_to_select) |> 
+    mutate(
+      hour = lubridate::floor_date(date, unit = "hour")
+    ) |> 
+    group_by(hour, source) |> 
+    summarise(
+      across(all_of(columns_to_select), ~ sum(.))
+    )|> 
+    ungroup()
+  
+  data_ts2 <- data_ts |> 
+    pivot_wider(
+      names_from = "source",
+      values_from = all_of(columns_to_select)
+    )
+  
+  data_ts2[is.na(data_ts2)] <- 0
+  return(data_ts2)
+  rm(data_ts1)
+}
+
+columns_to_select <- c("Ltheme1", "Ltheme2", "Ltheme3alt", "Ltheme3", "Ltheme4")
+#input_df <- meta_theta_df_comm
+data_ts2 <- wrangle_data(meta_theta_df_comm, columns_to_select)
+
+# Test for stationary
+
+# Loop over the variable names
+for (var_name in names(data_ts2)[-1]) {
+  series <- data_ts2[[var_name]]
+  diff_count <- ndiffs(series)
+  
+  if (diff_count == 0) {
+    print(paste(var_name, "is stationary (ndiffs =", diff_count, ")"))
+  } else {
+    print(paste(var_name, "is not stationary (ndiffs =", diff_count, ")"))
+  }
+}
+rm(diff_count, series, var_name)
+
+## They all need differencing of 1
+# Create a new loop to calculate differences for each column (excluding "hour")
+for (col in names(data_ts2)[-1]) {
+  # Calculate differences for the current column and store it in a new column
+  data_ts2[[paste0(col, "_diff")]] <- c(NA, diff(data_ts2[[col]]))
+  
+  # Remove the original column
+  data_ts2[[col]] <- NULL
+}
+
+rm(col)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme1_reddit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit (1) Moral Outage")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme2_reddit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit (2) Debates and Evidence")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme3_reddit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit (3) Dismissive and anti-fact-checking")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme4_reddit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Reddit (4) Emotional Reactions")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme1_twit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Twitter (1) Moral Outage")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme2_twit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Twitter (2) Debates and Evidence")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme3_twit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Twitter (3) Dismissive and anti-fact-checking")
+rm(acf, acf_print)
+```
+
+``` r
+acf <- as.data.frame(data_ts2$Ltheme4_twit_diff)
+acf <- ts(acf)
+acf_print <- ggtsdisplay(acf, theme = theme_hc(base_size = 6), main = "Twitter (4) Emotional Reactions")
+rm(acf, acf_print)
+```
+
+``` r
+timeseries_func <- function(input_df, version_number, column1, column2) {
+  
+  selected_columns <- c(column1, column2)
+  dat_comm <- input_df |> 
+    dplyr::select(all_of(selected_columns)) |> 
+    drop_na()
+  
+  dat_comm <- ts(dat_comm)
+  SC <- NA
+  SC <- VARselect(dat_comm, lag.max = 24, type = "both")[["selection"]][["SC(n)"]]
+  assign("SC", SC, envir = .GlobalEnv)
+  
+  adf_test_column1 <- adf.test(dat_comm[, column1], k = SC)
+  adf_test_column2 <- adf.test(dat_comm[, column2], k = SC)
+  
+  formula <- as.formula(paste(column1, "~", column2))
+  coint <- dynlm(formula, data = dat_comm)
+  ehat <- resid(coint)
+  johtest <- adf.test(ehat, k = SC)
+  
+  fitvarcomm <- VAR(dat_comm, p = SC, type = "both")
+  gc_column1 <- causality(fitvarcomm, cause = column1)
+  gc_column2 <- causality(fitvarcomm, cause = column2)
+  
+  irf_col2_response_twitter <- irf(fitvarcomm, impulse = column1,
+                  response = column2, boot = TRUE)
+  irf_col1_response_reddit <- irf(fitvarcomm, impulse = column2,
+                   response = column1, boot = TRUE)
+  residual<- residuals(fitvarcomm)
+  box.test_col1 <- Box.test(residual[,1], type='Ljung',lag=1)
+  box.test_col2 <- Box.test(residual[,2], type='Ljung',lag=1)
+  
+  
+  results <- list(
+    dat_comm = dat_comm,
+    SC = SC,
+    adf_test_column1 = adf_test_column1,
+    adf_test_column2 = adf_test_column2,
+    johtest = johtest,
+    fitvarcomm = fitvarcomm,
+    gc_column1 = gc_column1,
+    gc_column2 = gc_column2,
+    irf_col1_response_reddit = irf_col1_response_reddit,
+    irf_col2_response_twitter = irf_col2_response_twitter,
+    residual = residual,
+    box.test_col1 = box.test_col1,
+    box.test_col2 = box.test_col2
+  )
+  
+  assign(paste("results_v", version_number, sep = ""), results, envir = .GlobalEnv)
+  
+  return(results)
+}
+
+
+## Run it for Themes 1-3
+timeseries_func(data_ts2, "1.1", "Ltheme1_reddit_diff", "Ltheme1_twit_diff")
+timeseries_func(data_ts2, "1.2", "Ltheme2_reddit_diff", "Ltheme2_twit_diff")
+timeseries_func(data_ts2, "1.3", "Ltheme3_reddit_diff", "Ltheme3_twit_diff")
+timeseries_func(data_ts2, "1.4", "Ltheme4_reddit_diff", "Ltheme4_twit_diff")
+results_names <- ls(pattern = "^results_v.*")
+```
+
+### ADF Values
+
+``` r
+# Initialize an empty data frame to store the results
+adf_df <- data.frame(Theme = character(0), P_Value_Reddit = numeric(0), 
+                     P_Value_Twitter = numeric(0))
+
+# Iterate through the results_ lists
+for (result in results_names) {
+  # Retrieve the list from the environment
+  current_result <- get(result)
+  
+  # Extract p-values for both columns' ADF tests
+  #page_name <- sub("^results_v_([^_]+)_.*", "\\1", result)
+  variable <- gsub("_", " ", sub("^results_v_[^_]+_(.*)_diff$", "\\1", result))
+  column1_p_value <- round(current_result$adf_test_column1$p.value, 3)
+  column2_p_value <- current_result$adf_test_column2$p.value
+  
+  # Add the results to the adf_df
+  adf_df <- rbind(adf_df, data.frame(Theme = variable, P_Value_Reddit = column1_p_value,
+                                     P_Value_Twitter = column2_p_value))
+}
+
+adf_df <- rbind(adf_df, list("Volume", adf_reddit_vol$p.value, adf_twitter_vol$p.value))
+adf_df$Theme[adf_df$Theme == 'results v1.1'] <- '(1) Moral Outage'
+adf_df$Theme[adf_df$Theme == 'results v1.2'] <- '(2) Debates and Evidence'
+adf_df$Theme[adf_df$Theme == 'results v1.3'] <- '(3) Dismissive and anti-fact-checking'
+adf_df$Theme[adf_df$Theme == 'results v1.4'] <- '(4) Emotional Reactions'
+
+table <- flextable(adf_df)
+table <- theme_vanilla(table)
+table_caption = c("Table S2", "ADF Values for VAR Models")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, adf_df, table_caption, column1_name, column1_p_value, column2_p_value, variable)
+```
+
+### SC Lag Values
+
+``` r
+# Initialize an empty data frame to store the SC values
+sc_df <- data.frame(Theme = character(0), SC_Value = numeric(0))
+
+# Iterate through the results_ lists
+for (result in results_names) {
+  # Retrieve the list from the environment
+  current_result <- get(result)
+  
+  # Extract SC value
+  sc_value <- current_result$SC
+  
+  # Extract page_name and column1_name from result_name
+  theme <- sub("^results_v_([^_]+)_.*", "\\1", result)
+
+  # Add the SC value to the sc_df
+  sc_df <- rbind(sc_df, data.frame(Theme = theme, SC_Value = sc_value))
+}
+
+sc_df <- rbind(sc_df, list("Volume", SC_volume))
+sc_df$Theme[sc_df$Theme == 'results_v1.1'] <- '(1) Moral Outage'
+sc_df$Theme[sc_df$Theme == 'results_v1.2'] <- '(2) Debates and Evidence'
+sc_df$Theme[sc_df$Theme == 'results_v1.3'] <- '(3) Dismissive and anti-fact-checking'
+sc_df$Theme[sc_df$Theme == 'results_v1.4'] <- '(4) Emotional Reactions'
+
+table <- flextable(sc_df)
+table <- theme_vanilla(table)
+table_caption = c("Table S3", "Lag Selections SC for VAR Models")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, sc_df, table_caption)
+```
+
+### VAR Results
+
+``` r
+var_Reddit_Vol <- fitvarcomm_vol[["varresult"]]$reddit_diff
+var_Twitter_Vol <- fitvarcomm_vol[["varresult"]]$twit_diff
+
+models_volume <- list(
+  'Reddit Volume'= var_Reddit_Vol,
+  'Twitter Volume' = var_Twitter_Vol
+)
+
+coef_volume <- c(
+  "reddit_diff.l1" = "Reddit Volume (Lag 1)",
+  "reddit_diff.l2" = "Reddit Volume (Lag 2)",
+  "reddit_diff.l3" = "Reddit Volume (Lag 3)",
+  "reddit_diff.l4" = "Reddit Volume (Lag 4)",
+  "twit_diff.l1" = "Twitter Volume (Lag 1)",
+  "twit_diff.l2" = "Twitter Volume (Lag 2)",
+  "twit_diff.l3" = "Twitter Volume (Lag 3)",
+  "twit_diff.l4" = "Twitter Volume (Lag 4)"
+)
+  
+VAR_volume <- modelsummary(models_volume,
+             coef_map = coef_volume,
+             fmt = 4,
+             estimate  = c( "{estimate}{stars} ({std.error})"),
+             #extra = c("Adj. R-squared", "F-statistic"),
+             statistic = NULL,
+             gof_map = c("nobs", "r.squared", "adj.r.squared", "F"),
+             notes = list("* p < 0.05, ** p < 0.01, *** p < 0.001"),
+             output = "flextable")
+
+table <- theme_vanilla(VAR_volume)
+table_caption = c("Table S4", "VAR Models on Volume")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, VAR_volume, table_caption)
+```
+
+``` r
+var_Theme1_Reddit        <- results_v1.1$fitvarcomm[["varresult"]]$Ltheme1_reddit_diff
+var_Theme1_Twit          <- results_v1.1$fitvarcomm[["varresult"]]$Ltheme1_twit_diff
+var_Theme2_Reddit        <- results_v1.2$fitvarcomm[["varresult"]]$Ltheme2_reddit_diff
+var_Theme2_Twit          <- results_v1.2$fitvarcomm[["varresult"]]$Ltheme2_twit_diff
+var_Theme3_Reddit        <- results_v1.3$fitvarcomm[["varresult"]]$Ltheme3_reddit_diff
+var_Theme3_Twit          <- results_v1.3$fitvarcomm[["varresult"]]$Ltheme3_twit_diff
+var_Theme4_Reddit        <- results_v1.4$fitvarcomm[["varresult"]]$Ltheme4_reddit_diff
+var_Theme4_Twit          <- results_v1.4$fitvarcomm[["varresult"]]$Ltheme4_twit_diff
+```
+
+``` r
+models_reddit <- list(
+  '(1) Moral Outrage (green) Reddit'= var_Theme1_Reddit,
+  '(2) Debates & Evidence (gray) Reddit' = var_Theme2_Reddit, 
+  '(3) Dismissive and anti-fact-checking (gold) Reddit' = var_Theme3_Reddit,
+  '(4) Emotional Reactions (purple) Reddit' = var_Theme4_Reddit
+)
+
+coef_reddit <- c(
+  "Ltheme1_twit_diff.l1" = "(1) Moral Outrage Twitter (Lag 1)",
+  "Ltheme1_twit_diff.l2" = "(1) Moral Outrage Twitter (Lag 2)",
+  "Ltheme1_twit_diff.l3" = "(1) Moral Outrage Twitter (Lag 3)",
+  "Ltheme1_twit_diff.4" = "(1) Moral Outrage Twitter (Lag 4)",
+  "Ltheme2_twit_diff.l1" = "(2) Debates & Evidence Twitter (Lag 1)",
+  "Ltheme2_twit_diff.l2" = "(2) Debates & Evidence Twitter (Lag 2)",
+  "Ltheme2_twit_diff.l3" = "(2) Debates & Evidence Twitter (Lag 3)",
+  "Ltheme2_twit_diff.4" = "(2) Debates & Evidence Twitter (Lag 4)",
+  "Ltheme3_twit_diff.l1" = "(3) Dismissive and anti-fact-checking Twitter (Lag 1)",
+  "Ltheme3_twit_diff.l2" = "(3) Dismissive and anti-fact-checking Twitter (Lag 2)",
+  "Ltheme3_twit_diff.l3" = "(3) Dismissive and anti-fact-checking Twitter (Lag 3)",
+  "Ltheme3_twit_diff.4" = "(3) Dismissive and anti-fact-checking Twitter (Lag 4)",
+  "Ltheme4_twit_diff.l1" = "(4) Emotional Reactions Twitter (Lag 1)",
+  "Ltheme4_twit_diff.l2" = "(4) Emotional Reactions Twitter (Lag 2)",
+  "Ltheme4_twit_diff.l3" = "(4) Emotional Reactions Twitter (Lag 3)",
+  "Ltheme4_twit_diff.4" = "(4) Emotional Reactions Twitter (Lag 4)"
+)
+
+VAR_Reddit <- modelsummary(models_reddit,
+             coef_map = coef_reddit,
+             fmt = 4,
+             estimate  = c( "{estimate}{stars} ({std.error})"),
+             statistic = NULL,
+             gof_map = c("nobs", "r.squared", "adj.r.squared"),
+             notes = list("* p < 0.05, ** p < 0.01, *** p < 0.001"),
+             output = "flextable")
+
+
+table <- theme_vanilla(VAR_Reddit)
+table_caption = c("Table S5", "VAR Models Reddit")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, VAR_Reddit, table_caption)
+```
+
+``` r
+models_twit <- list(
+  '(1) Moral Outrage (green) Twitter'    = var_Theme1_Twit,
+  '(2) Debates & Evidence (gray) Twitter' = var_Theme2_Twit, 
+  '(3) Dismissive and anti-fact-checking (gold) Twitter' = var_Theme3_Twit,
+  '(4) Emotional Reactions (purple) Twitter' = var_Theme4_Twit
+)
+
+
+coef_twit <- c(
+  "Ltheme1_reddit_diff.l1" = "(1) Moral Outrage Reddit (Lag 1)",
+  "Ltheme1_reddit_diff.l2" = "(1) Moral Outrage Reddit (Lag 2)",
+  "Ltheme1_reddit_diff.l3" = "(1) Moral Outrage Reddit (Lag 3)",
+  "Ltheme1_reddit_diff.4" = "(1) Moral Outrage Reddit (Lag 4)",
+  "Ltheme2_reddit_diff.l1" = "(2) Debates & Evidence Reddit (Lag 1)",
+  "Ltheme2_reddit_diff.l2" = "(2) Debates & Evidence Reddit (Lag 2)",
+  "Ltheme2_reddit_diff.l3" = "(2) Debates & Evidence Reddit (Lag 3)",
+  "Ltheme2_reddit_diff.4" = "(2) Debates & Evidence Reddit (Lag 4)",
+  "Ltheme3_reddit_diff.l1" = "(3) Dismissive and anti-fact-checking Reddit (Lag 1)",
+  "Ltheme3_reddit_diff.l2" = "(3) Dismissive and anti-fact-checking Reddit (Lag 2)",
+  "Ltheme3_reddit_diff.l3" = "(3) Dismissive and anti-fact-checking Reddit (Lag 3)",
+  "Ltheme3_reddit_diff.4" = "(3) Dismissive and anti-fact-checking Reddit (Lag 4)",
+  "Ltheme4_reddit_diff.l1" = "(4) Emotional Reactions Reddit (Lag 1)",
+  "Ltheme4_reddit_diff.l2" = "(4) Emotional Reactions Reddit (Lag 2)",
+  "Ltheme4_reddit_diff.l3" = "(4) Emotional Reactions Reddit (Lag 3)",
+  "Ltheme4_reddit_diff.4" = "(4) Emotional Reactions Reddit (Lag 4)"
+)
+
+
+  
+
+VAR_Twitter <- modelsummary(models_twit,
+             coef_map = coef_twit,
+             fmt = 4,
+             estimate  = c( "{estimate}{stars} ({std.error})"),
+             statistic = NULL,
+             gof_map = c("nobs", "r.squared", "adj.r.squared"),
+             notes = list("* p < 0.05, ** p < 0.01, *** p < 0.001"),
+             output = "flextable")
+
+
+table <- theme_vanilla(VAR_Twitter)
+table_caption = c("Table S6", "VAR Models Twitter")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, VAR_Reddit, table_caption)
+```
+
+### Granger Causality Results
+
+``` r
+gc_df <- data.frame(Response = c("Volume: Reddit on Twitter", 
+                                      "Volume: Twitter on Reddit",
+                                      "(1) Moral Outrage Reddit on Twitter", 
+                                      "(1) Moral Outrage Twitter on Reddit", 
+                                      "(2) Debates & Evidence Reddit on Twitter", 
+                                      "(2) Debates & Evidence Twitter on Reddit", 
+                                      "(3) Dismissive and anti-fact-checking Reddit on Twitter", 
+                                      "(3) Dismissive and anti-fact-checking Twitter on Reddit",
+                                      "(4) Emotional Reactions Reddit on Twitter", 
+                                      "(4) Emotional Reactions Twitter on Reddit"),
+                    f.test = c(gc_redvolume$Granger$statistic,
+                               gc_twittervol$Granger$statistic,
+                              results_v1.1$gc_column1$Granger$statistic, 
+                              results_v1.1$gc_column2$Granger$statistic,
+                              results_v1.2$gc_column1$Granger$statistic, 
+                              results_v1.2$gc_column2$Granger$statistic,
+                              results_v1.3$gc_column1$Granger$statistic, 
+                              results_v1.3$gc_column2$Granger$statistic,
+                              results_v1.4$gc_column1$Granger$statistic, 
+                              results_v1.4$gc_column2$Granger$statistic),
+                    granger.p.value = c(
+                              gc_redvolume$Granger$p.value,
+                              gc_twittervol$Granger$p.value,
+                              results_v1.1$gc_column1$Granger$p.value, 
+                              results_v1.1$gc_column2$Granger$p.value,
+                              results_v1.2$gc_column1$Granger$p.value, 
+                              results_v1.2$gc_column2$Granger$p.value,
+                              results_v1.3$gc_column1$Granger$p.value, 
+                              results_v1.3$gc_column2$Granger$p.value,
+                              results_v1.4$gc_column1$Granger$p.value, 
+                              results_v1.4$gc_column2$Granger$p.value
+                            )
+                            )
+gc_df$granger.p.value <- round(gc_df$granger.p.value, 4)
+
+gc_df <- gc_df |> 
+    mutate(significance = case_when(
+    granger.p.value < 0.001 ~ "p<0.001***",
+    granger.p.value < 0.01  ~ "p<0.01**",
+    granger.p.value < 0.05  ~ "p<0.05*",
+    TRUE                    ~ "ns"
+  )) |> 
+  rename("Var Model" = "Response",
+         "F-Test" = "f.test",
+         "Granger P Value" = "granger.p.value",
+         "Significance" = "significance")
+
+
+table <- flextable(gc_df)
+table <- theme_vanilla(table)
+table_caption = c("Table S7", "Granger Causality Tests on VAR Models")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+
+table
+
+rm(table, gc_df, table_caption)
+```
+
+### Impulse Response Functions
+
+#### Volume
+
+``` r
+## Daniel Arnon's function
+getIRFPlotData <- function(impulse, response, list) {
+  cbind.data.frame(Theme = 0:(nrow(list[[1]][[1]])-1),
+                   Lower = list[[2]][names(list[[2]]) == impulse][[1]] |>  as.data.frame() |>  dplyr::select(response) |>  pull(1),
+                   irf = list[[1]][names(list[[1]]) == impulse][[1]] |>  as.data.frame() |>  dplyr::select(response) |>  pull(1),
+                   Upper = list[[3]][names(list[[3]]) == impulse][[1]] |>  as.data.frame() |>  dplyr::select(response) |>  pull(1),
+                   Impulse = impulse,
+                   Response = response, stringsAsFactors = FALSE)
+}
+```
+
+``` r
+volume_reddit <- getIRFPlotData("twit_diff", "reddit_diff", irf_comm_reddit_vol)
+LVtheme1_R <- getIRFPlotData("Ltheme1_twit_diff", "Ltheme1_reddit_diff",
+                             results_v1.1$irf_col1_response_reddit)
+LVtheme2_R <- getIRFPlotData("Ltheme2_twit_diff",  "Ltheme2_reddit_diff",
+                             results_v1.2$irf_col1_response_reddit)
+LVtheme3_R <- getIRFPlotData( "Ltheme3_twit_diff", "Ltheme3_reddit_diff",
+                              results_v1.3$irf_col1_response_reddit)
+LVtheme4_R <- getIRFPlotData("Ltheme4_twit_diff", "Ltheme4_reddit_diff",
+                             results_v1.4$irf_col1_response_reddit)
+
+plot_reddit <- rbind(volume_reddit,
+                     LVtheme1_R,
+                     LVtheme2_R,
+                     LVtheme3_R,
+                     LVtheme4_R)
+
+plot_reddit <- plot_reddit |>  mutate(group = paste0(Impulse, Response))
+plot_reddit <- as.data.frame(plot_reddit)
+
+plot_reddit$Response <- recode(plot_reddit$Response, 
+                               reddit_diff = "Reddit",
+                               Ltheme1_reddit_diff = "(1) Moral outrage: Reddit",
+                               Ltheme2_reddit_diff= "(2) Debates & evidence: Reddit",
+                               Ltheme3_reddit_diff = "(3) Dismissive and anti-fact-checking: Reddit",
+                               Ltheme4_reddit_diff = "(4) Emotional reaction: Reddit")
+
+plot_reddit$group <- factor(plot_reddit$group, levels = c("twit_diffreddit_diff", "Ltheme1_twit_diffLtheme1_reddit_diff", "Ltheme2_twit_diffLtheme2_reddit_diff", "Ltheme3_twit_diffLtheme3_reddit_diff", "Ltheme4_twit_diffLtheme4_reddit_diff"))
+
+
+labels_reddit <- as_labeller(
+  c(
+    "twit_diffreddit_diff" = "Panel A: Volume Impulse: Twitter // Response: Reddit ", 
+      "Ltheme4_twit_diffLtheme4_reddit_diff" = "Panel E: (4) Emotional reaction Impulse = Twitter // Response = Reddit",
+        "Ltheme3_twit_diffLtheme3_reddit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Twitter // Response = Reddit",
+        "Ltheme2_twit_diffLtheme2_reddit_diff" = "Panel C: (2) Debates & evidence Impulse = Twitter // Response = Reddit",
+        "Ltheme1_twit_diffLtheme1_reddit_diff" = "Panel B: (1) Moral outrage: Impulse = Twitter // Response = Reddit"
+  ))
+
+ggplot(plot_reddit, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_reddit,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "Volume") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_Response_Reddit.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_reddit, labels_reddit)
+```
+
+``` r
+volume_twitter <- getIRFPlotData("reddit_diff", "twit_diff", irf_comm_twitter_vol)
+
+LVtheme1_T <- getIRFPlotData("Ltheme1_reddit_diff","Ltheme1_twit_diff", 
+                             results_v1.1$irf_col2_response_twitter)
+LVtheme2_T <- getIRFPlotData("Ltheme2_reddit_diff","Ltheme2_twit_diff",  
+                             results_v1.2$irf_col2_response_twitter)
+LVtheme3_T <- getIRFPlotData( "Ltheme3_reddit_diff","Ltheme3_twit_diff", 
+                              results_v1.3$irf_col2_response_twitter)
+LVtheme4_T <- getIRFPlotData("Ltheme4_reddit_diff", "Ltheme4_twit_diff", 
+                             results_v1.4$irf_col2_response_twitter)
+
+plot_twitter <- rbind(volume_twitter,
+                     LVtheme1_T,
+                     LVtheme2_T,
+                     LVtheme3_T,
+                     LVtheme4_T)
+
+plot_twitter <- plot_twitter |>  mutate(group = paste0(Impulse, Response))
+plot_twitter <- as.data.frame(plot_twitter)
+
+plot_twitter$Response <- recode(plot_twitter$Response, 
+                               twit_diff = "Twitter",
+                               Ltheme1_twit_diff = "(1) Moral outrage: Twitter",
+                               Ltheme2_twit_diff= "(2) Debates & evidence: Twitter",
+                               Ltheme3_twit_diff = "(3) Dismissive and anti-fact-checking: Twitter",
+                               Ltheme4_twit_diff = "(4) Emotional reaction: Twitter")
+
+plot_twitter$group <- factor(plot_twitter$group, levels = c("reddit_difftwit_diff", "Ltheme1_reddit_diffLtheme1_twit_diff", "Ltheme2_reddit_diffLtheme2_twit_diff", "Ltheme3_reddit_diffLtheme3_twit_diff", "Ltheme4_reddit_diffLtheme4_twit_diff"))
+
+
+labels_twitter <- as_labeller(
+  c(
+    "reddit_difftwit_diff" = "Panel A: Volume Impulse: Reddit // Response: Twitter ", 
+      "Ltheme4_reddit_diffLtheme4_twit_diff" = "Panel E: (4) Emotional reaction Impulse = Reddit // Response = Twitter",
+        "Ltheme3_reddit_diffLtheme3_twit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Reddit // Response = Twitter",
+        "Ltheme2_reddit_diffLtheme2_twit_diff" = "Panel C: (2) Debates & evidence Impulse = Reddit // Response = Twitter",
+        "Ltheme1_reddit_diffLtheme1_twit_diff" = "Panel B: (1) Moral outrage: Impulse = Reddit // Response = Twitter"
+  ))
+
+ggplot(plot_twitter, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_twitter,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "Volume") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_Response_Twitter.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_twitter, labels_twitter)
+```
+
+``` r
+#### Standard Deviation
+
+getIRFPlotData <- function(impulse, response, list, sd_impulse) {
+  cbind.data.frame(
+    Theme = 0:(nrow(list[[1]][[1]]) - 1),
+    Lower = (list[[2]][names(list[[2]]) == impulse][[1]] |> 
+               as.data.frame() |> 
+               dplyr::select(response) |> 
+               pull(1)) / sd_impulse,
+    irf = (list[[1]][names(list[[1]]) == impulse][[1]] |> 
+             as.data.frame() |> 
+             dplyr::select(response) |> 
+             pull(1)) / sd_impulse,
+    Upper = (list[[3]][names(list[[3]]) == impulse][[1]] |> 
+               as.data.frame() |> 
+               dplyr::select(response) |> 
+               pull(1)) / sd_impulse,
+    Impulse = impulse,
+    Response = response, 
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+``` r
+sd_twit_diff <- sd(irf_comm_reddit_vol$irf$twit_diff)
+
+volume_reddit <- getIRFPlotData("twit_diff", "reddit_diff", irf_comm_reddit_vol, sd_twit_diff)
+
+sd_Ltheme1_twit_diff <- sd(results_v1.1$irf_col1_response_reddit$irf$Ltheme1_twit_diff)
+LVtheme1_R <- getIRFPlotData("Ltheme1_twit_diff", "Ltheme1_reddit_diff",
+                             results_v1.1$irf_col1_response_reddit, sd_Ltheme1_twit_diff)
+
+sd_Ltheme2_twit_diff <- sd(results_v1.2$irf_col1_response_reddit$irf$Ltheme2_twit_diff)
+LVtheme2_R <- getIRFPlotData("Ltheme2_twit_diff",  "Ltheme2_reddit_diff",
+                             results_v1.2$irf_col1_response_reddit, sd_Ltheme2_twit_diff)
+sd_Ltheme3_twit_diff <- sd(results_v1.3$irf_col1_response_reddit$irf$Ltheme3_twit_diff)
+LVtheme3_R <- getIRFPlotData( "Ltheme3_twit_diff", "Ltheme3_reddit_diff",
+                              results_v1.3$irf_col1_response_reddit, sd_Ltheme3_twit_diff)
+
+sd_Ltheme4_twit_diff <- sd(results_v1.4$irf_col1_response_reddit$irf$Ltheme4_twit_diff)
+LVtheme4_R <- getIRFPlotData("Ltheme4_twit_diff", "Ltheme4_reddit_diff",
+                             results_v1.4$irf_col1_response_reddit, sd_Ltheme4_twit_diff)
+
+plot_reddit <- rbind(volume_reddit,
+                     LVtheme1_R,
+                     LVtheme2_R,
+                     LVtheme3_R,
+                     LVtheme4_R)
+
+plot_reddit <- plot_reddit |>  mutate(group = paste0(Impulse, Response))
+plot_reddit <- as.data.frame(plot_reddit)
+
+plot_reddit$Response <- recode(plot_reddit$Response, 
+                               reddit_diff = "Reddit",
+                               Ltheme1_reddit_diff = "(1) Moral outrage: Reddit",
+                               Ltheme2_reddit_diff= "(2) Debates & evidence: Reddit",
+                               Ltheme3_reddit_diff = "(3) Dismissive and anti-fact-checking: Reddit",
+                               Ltheme4_reddit_diff = "(4) Emotional reaction: Reddit")
+
+plot_reddit$group <- factor(plot_reddit$group, levels = c("twit_diffreddit_diff", "Ltheme1_twit_diffLtheme1_reddit_diff", "Ltheme2_twit_diffLtheme2_reddit_diff", "Ltheme3_twit_diffLtheme3_reddit_diff", "Ltheme4_twit_diffLtheme4_reddit_diff"))
+
+
+labels_reddit <- as_labeller(
+  c(
+    "twit_diffreddit_diff" = "Panel A: Volume Impulse: Twitter // Response: Reddit ", 
+      "Ltheme4_twit_diffLtheme4_reddit_diff" = "Panel E: (4) Emotional reaction Impulse = Twitter // Response = Reddit",
+        "Ltheme3_twit_diffLtheme3_reddit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Twitter // Response = Reddit",
+        "Ltheme2_twit_diffLtheme2_reddit_diff" = "Panel C: (2) Debates & evidence Impulse = Twitter // Response = Reddit",
+        "Ltheme1_twit_diffLtheme1_reddit_diff" = "Panel B: (1) Moral outrage: Impulse = Twitter // Response = Reddit"
+  ))
+
+ggplot(plot_reddit, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_reddit,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "SD") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_SD_Response_Reddit.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_reddit, labels_reddit)
+```
+
+``` r
+sd_reddit_diff <- sd(irf_comm_twitter_vol$irf$reddit_diff)
+volume_twitter <- getIRFPlotData("reddit_diff", "twit_diff", irf_comm_twitter_vol, sd_reddit_diff)
+
+sd_Ltheme1_reddit_diff <- sd(results_v1.1$irf_col2_response_twitter$irf$Ltheme1_reddit_diff)
+LVtheme1_T <- getIRFPlotData("Ltheme1_reddit_diff", "Ltheme1_twit_diff", 
+                             results_v1.1$irf_col2_response_twitter, sd_Ltheme1_reddit_diff)
+
+sd_Ltheme2_reddit_diff <- sd(results_v1.2$irf_col2_response_twitter$irf$Ltheme2_reddit_diff)
+LVtheme2_T <- getIRFPlotData("Ltheme2_reddit_diff", "Ltheme2_twit_diff",  
+                             results_v1.2$irf_col2_response_twitter, sd_Ltheme2_reddit_diff)
+
+sd_Ltheme3_reddit_diff <- sd(results_v1.3$irf_col2_response_twitter$irf$Ltheme3_reddit_diff)
+LVtheme3_T <- getIRFPlotData("Ltheme3_reddit_diff", "Ltheme3_twit_diff", 
+                             results_v1.3$irf_col2_response_twitter, sd_Ltheme3_reddit_diff)
+
+sd_Ltheme4_reddit_diff <- sd(results_v1.4$irf_col2_response_twitter$irf$Ltheme4_reddit_diff)
+LVtheme4_T <- getIRFPlotData("Ltheme4_reddit_diff", "Ltheme4_twit_diff", 
+                             results_v1.4$irf_col2_response_twitter, sd_Ltheme4_reddit_diff)
+
+
+plot_twitter <- rbind(volume_twitter,
+                     LVtheme1_T,
+                     LVtheme2_T,
+                     LVtheme3_T,
+                     LVtheme4_T)
+
+plot_twitter <- plot_twitter |>  mutate(group = paste0(Impulse, Response))
+plot_twitter <- as.data.frame(plot_twitter)
+
+plot_twitter$Response <- recode(plot_twitter$Response, 
+                               twit_diff = "Twitter",
+                               Ltheme1_twit_diff = "(1) Moral outrage: Twitter",
+                               Ltheme2_twit_diff= "(2) Debates & evidence: Twitter",
+                               Ltheme3_twit_diff = "(3) Dismissive and anti-fact-checking: Twitter",
+                               Ltheme4_twit_diff = "(4) Emotional reaction: Twitter")
+
+plot_twitter$group <- factor(plot_twitter$group, levels = c("reddit_difftwit_diff", "Ltheme1_reddit_diffLtheme1_twit_diff", "Ltheme2_reddit_diffLtheme2_twit_diff", "Ltheme3_reddit_diffLtheme3_twit_diff", "Ltheme4_reddit_diffLtheme4_twit_diff"))
+
+
+labels_twitter <- as_labeller(
+  c(
+    "reddit_difftwit_diff" = "Panel A: Volume Impulse: Reddit // Response: Twitter ", 
+      "Ltheme4_reddit_diffLtheme4_twit_diff" = "Panel E: (4) Emotional reaction Impulse = Reddit // Response = Twitter",
+        "Ltheme3_reddit_diffLtheme3_twit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Reddit // Response = Twitter",
+        "Ltheme2_reddit_diffLtheme2_twit_diff" = "Panel C: (2) Debates & evidence Impulse = Reddit // Response = Twitter",
+        "Ltheme1_reddit_diffLtheme1_twit_diff" = "Panel B: (1) Moral outrage: Impulse = Reddit // Response = Twitter"
+  ))
+
+ggplot(plot_twitter, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_twitter,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "SD") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_SD_Response_Twitter.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_twitter, labels_twitter)
+```
+
+#### Non-cumulative IRF (differences)
+
+``` r
+getNonCumulativeIRFPlotData <- function(impulse, response, list, sd_impulse) {
+  # Get the cumulative IRF, upper, and lower bounds
+  cumulative_irf <- list[[1]][names(list[[1]]) == impulse][[1]] |> as.data.frame() |> dplyr::select(response) |> pull(1)
+  upper <- list[[3]][names(list[[3]]) == impulse][[1]] |> as.data.frame() |> dplyr::select(response) |> pull(1)
+  lower <- list[[2]][names(list[[2]]) == impulse][[1]] |> as.data.frame() |> dplyr::select(response) |> pull(1)
+  
+  # Calculate the non-cumulative IRF by differencing the cumulative IRF
+  non_cumulative_irf <- c(cumulative_irf[1], diff(cumulative_irf))
+  
+  cbind.data.frame(
+    Theme = 0:(nrow(list[[1]][[1]]) - 1),
+    Lower = lower / sd_impulse,
+    irf = non_cumulative_irf / sd_impulse,
+    Upper = upper / sd_impulse,
+    Impulse = impulse,
+    Response = response, 
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+``` r
+sd_twit_diff <- sd(irf_comm_reddit_vol$irf$twit_diff)
+
+volume_reddit <- getNonCumulativeIRFPlotData("twit_diff", "reddit_diff", irf_comm_reddit_vol, sd_twit_diff)
+
+sd_Ltheme1_twit_diff <- sd(results_v1.1$irf_col1_response_reddit$irf$Ltheme1_twit_diff)
+LVtheme1_R <- getNonCumulativeIRFPlotData("Ltheme1_twit_diff", "Ltheme1_reddit_diff",
+                             results_v1.1$irf_col1_response_reddit, sd_Ltheme1_twit_diff)
+
+sd_Ltheme2_twit_diff <- sd(results_v1.2$irf_col1_response_reddit$irf$Ltheme2_twit_diff)
+LVtheme2_R <- getNonCumulativeIRFPlotData("Ltheme2_twit_diff",  "Ltheme2_reddit_diff",
+                             results_v1.2$irf_col1_response_reddit, sd_Ltheme2_twit_diff)
+sd_Ltheme3_twit_diff <- sd(results_v1.3$irf_col1_response_reddit$irf$Ltheme3_twit_diff)
+LVtheme3_R <- getNonCumulativeIRFPlotData( "Ltheme3_twit_diff", "Ltheme3_reddit_diff",
+                              results_v1.3$irf_col1_response_reddit, sd_Ltheme3_twit_diff)
+
+sd_Ltheme4_twit_diff <- sd(results_v1.4$irf_col1_response_reddit$irf$Ltheme4_twit_diff)
+LVtheme4_R <- getNonCumulativeIRFPlotData("Ltheme4_twit_diff", "Ltheme4_reddit_diff",
+                             results_v1.4$irf_col1_response_reddit, sd_Ltheme4_twit_diff)
+
+plot_reddit <- rbind(volume_reddit,
+                     LVtheme1_R,
+                     LVtheme2_R,
+                     LVtheme3_R,
+                     LVtheme4_R)
+
+plot_reddit <- plot_reddit |>  mutate(group = paste0(Impulse, Response))
+plot_reddit <- as.data.frame(plot_reddit)
+
+plot_reddit$Response <- recode(plot_reddit$Response, 
+                               reddit_diff = "Reddit",
+                               Ltheme1_reddit_diff = "(1) Moral outrage: Reddit",
+                               Ltheme2_reddit_diff= "(2) Debates & evidence: Reddit",
+                               Ltheme3_reddit_diff = "(3) Dismissive and anti-fact-checking: Reddit",
+                               Ltheme4_reddit_diff = "(4) Emotional reaction: Reddit")
+
+plot_reddit$group <- factor(plot_reddit$group, levels = c("twit_diffreddit_diff", "Ltheme1_twit_diffLtheme1_reddit_diff", "Ltheme2_twit_diffLtheme2_reddit_diff", "Ltheme3_twit_diffLtheme3_reddit_diff", "Ltheme4_twit_diffLtheme4_reddit_diff"))
+
+
+labels_reddit <- as_labeller(
+  c(
+    "twit_diffreddit_diff" = "Panel A: Volume Impulse: Twitter // Response: Reddit ", 
+      "Ltheme4_twit_diffLtheme4_reddit_diff" = "Panel E: (4) Emotional reaction Impulse = Twitter // Response = Reddit",
+        "Ltheme3_twit_diffLtheme3_reddit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Twitter // Response = Reddit",
+        "Ltheme2_twit_diffLtheme2_reddit_diff" = "Panel C: (2) Debates & evidence Impulse = Twitter // Response = Reddit",
+        "Ltheme1_twit_diffLtheme1_reddit_diff" = "Panel B: (1) Moral outrage: Impulse = Twitter // Response = Reddit"
+  ))
+
+ggplot(plot_reddit, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_reddit,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "SD") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_NC_SD_Response_Reddit.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_reddit, labels_reddit)
+```
+
+``` r
+sd_reddit_diff <- sd(irf_comm_twitter_vol$irf$reddit_diff)
+volume_twitter <- getIRFPlotData("reddit_diff", "twit_diff", irf_comm_twitter_vol, sd_reddit_diff)
+
+sd_Ltheme1_reddit_diff <- sd(results_v1.1$irf_col2_response_twitter$irf$Ltheme1_reddit_diff)
+LVtheme1_T <- getNonCumulativeIRFPlotData("Ltheme1_reddit_diff", "Ltheme1_twit_diff", 
+                             results_v1.1$irf_col2_response_twitter, sd_Ltheme1_reddit_diff)
+
+sd_Ltheme2_reddit_diff <- sd(results_v1.2$irf_col2_response_twitter$irf$Ltheme2_reddit_diff)
+LVtheme2_T <- getNonCumulativeIRFPlotData("Ltheme2_reddit_diff", "Ltheme2_twit_diff",  
+                             results_v1.2$irf_col2_response_twitter, sd_Ltheme2_reddit_diff)
+
+sd_Ltheme3_reddit_diff <- sd(results_v1.3$irf_col2_response_twitter$irf$Ltheme3_reddit_diff)
+LVtheme3_T <- getNonCumulativeIRFPlotData("Ltheme3_reddit_diff", "Ltheme3_twit_diff", 
+                             results_v1.3$irf_col2_response_twitter, sd_Ltheme3_reddit_diff)
+
+sd_Ltheme4_reddit_diff <- sd(results_v1.4$irf_col2_response_twitter$irf$Ltheme4_reddit_diff)
+LVtheme4_T <- getNonCumulativeIRFPlotData("Ltheme4_reddit_diff", "Ltheme4_twit_diff", 
+                             results_v1.4$irf_col2_response_twitter, sd_Ltheme4_reddit_diff)
+
+
+plot_twitter <- rbind(volume_twitter,
+                     LVtheme1_T,
+                     LVtheme2_T,
+                     LVtheme3_T,
+                     LVtheme4_T)
+
+plot_twitter <- plot_twitter |>  mutate(group = paste0(Impulse, Response))
+plot_twitter <- as.data.frame(plot_twitter)
+
+plot_twitter$Response <- recode(plot_twitter$Response, 
+                               twit_diff = "Twitter",
+                               Ltheme1_twit_diff = "(1) Moral outrage: Twitter",
+                               Ltheme2_twit_diff= "(2) Debates & evidence: Twitter",
+                               Ltheme3_twit_diff = "(3) Dismissive and anti-fact-checking: Twitter",
+                               Ltheme4_twit_diff = "(4) Emotional reaction: Twitter")
+
+plot_twitter$group <- factor(plot_twitter$group, levels = c("reddit_difftwit_diff", "Ltheme1_reddit_diffLtheme1_twit_diff", "Ltheme2_reddit_diffLtheme2_twit_diff", "Ltheme3_reddit_diffLtheme3_twit_diff", "Ltheme4_reddit_diffLtheme4_twit_diff"))
+
+
+labels_twitter <- as_labeller(
+  c(
+    "reddit_difftwit_diff" = "Panel A: Volume Impulse: Reddit // Response: Twitter ", 
+      "Ltheme4_reddit_diffLtheme4_twit_diff" = "Panel E: (4) Emotional reaction Impulse = Reddit // Response = Twitter",
+        "Ltheme3_reddit_diffLtheme3_twit_diff" = "Panel D: (3) Dismissive and anti-fact-checking Impulse = Reddit // Response = Twitter",
+        "Ltheme2_reddit_diffLtheme2_twit_diff" = "Panel C: (2) Debates & evidence Impulse = Reddit // Response = Twitter",
+        "Ltheme1_reddit_diffLtheme1_twit_diff" = "Panel B: (1) Moral outrage: Impulse = Reddit // Response = Twitter"
+  ))
+
+ggplot(plot_twitter, aes(x = Theme, y = irf)) +
+  geom_line(aes(x = Theme, y = irf), color = "red2", size = 1.5) +
+  geom_line(aes(x = Theme, y = Upper) , linetype = "dashed")+
+  geom_line(aes(x = Theme, y = Lower), linetype = "dashed")+
+  geom_hline(aes(yintercept=0),
+             linetype = "solid", color = "blue2") +
+  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) +
+  facet_grid(.~ Response) +
+  facet_wrap(.~group,
+             labeller = labels_twitter,
+             nrow = 5,
+             scales = "free_y") +
+  labs(x = "time(hours)",
+       y= "SD") +
+  ggtitle("") +
+  theme_hc() +
+  theme(text=element_text(size=12,family="sans"),
+        title=element_text(size=12,family="sans"),
+        axis.text.x=element_text(angle=12, hjust=1, family="sans"),
+        axis.text.y=element_text(family="sans"),
+        axis.title.x=element_text(vjust=-0.25, size=12, family="sans"),
+        axis.title.y=element_text(vjust=-0.25, size=12, family="sans"),
+        legend.position="none", legend.box="vertical", legend.margin=margin(),
+        legend.key = element_rect(fill="white"), legend.background = element_rect(fill=NA),
+        legend.text=element_text(size=12, family="sans"))
+ggsave("IRF_NC_SD_Response_Twitter.jpeg", bg = "white",
+       width=8, height=6, dpi=300)
+rm(plot_twitter, labels_twitter)
+```
+
+### Post-Hoc Tests
+
+#### Johansen test for co-integration
+
+The Johansen test for co-integration results for all variables have
+p-values less than 0.05, which indicates that we reject the null
+hypothesis of no-cointegration, suggesting that there is statistical
+evidence of a long-run equilibrium relationship between each of these
+variables. This implies that changes in these variables are not just
+random noise but may have a lasting effect, indicating a potentially
+stable relationship over time that could be predictive or indicative of
+future movements.
+
+``` r
+jt_df <- data.frame(Response = c("Volume", 
+                                      "(1) Moral Outrage", 
+                                      "(2) Debates & Evidence", 
+                                      "(3) Dismissive and anti-fact-checking", 
+                                      "(4) Emotional Reactions Reddit"),
+                    'Johansen test P Value' = c(johtest_vol$p.value,
+                              results_v1.1$johtest$p.value, 
+                              results_v1.2$johtest$p.value, 
+                              results_v1.3$johtest$p.value, 
+                              results_v1.4$johtest$p.value
+                              )
+                    )
+
+
+table <- flextable(jt_df)
+table <- theme_vanilla(table)
+table_caption = c("Table S8", "Johansen test for co-integration VAR Models")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE) |> 
+  footnote(i = 1, j = 2,
+  value = as_paragraph(
+    c(
+      "p-value (rejection criteria p<0.05)"
+    )
+  ),
+  ref_symbols = c("Note:"),
+  part = "header"
+)
+
+table
+
+rm(table, jt_df, table_caption)
+```
+
+#### Ljung-Box Test
+
+The Ljung-Box Test result for none of the variables show evidence of
+autocorrelation at the statistical significance level of p \< 0.05 for
+either Reddit or Twitter all p-values are above 0.05.
+
+``` r
+lb_df <- data.frame(Variable = 
+                      c("Volume", 
+                        "(1) Moral Outrage", 
+                        "(2) Debates & Evidence", 
+                        "(3) Dismissive and anti-fact-checking", 
+                        "(4) Emotional Reactions Reddit"),
+                    'Reddit P Value' = 
+                      c(box.test_red_vol$p.value,
+                        results_v1.1$box.test_col1$p.value, 
+                        results_v1.2$box.test_col1$p.value, 
+                        results_v1.3$box.test_col1$p.value, 
+                        results_v1.4$box.test_col1$p.value
+                        ),
+                    'Twitter P Value' = 
+                      c(box.test_twit_vol$p.value,
+                        results_v1.1$box.test_col2$p.value, 
+                        results_v1.2$box.test_col2$p.value, 
+                        results_v1.3$box.test_col2$p.value, 
+                        results_v1.4$box.test_col2$p.value)
+                    )
+
+table <- flextable(lb_df)
+table <- theme_vanilla(table)
+table_caption = c("Table S9", "Ljung-Box Test VAR Models")
+
+table <- table |>
+  add_header_lines(values = table_caption) |>
+  bold(part = "header", i = 1) |>
+  italic(part = "header", i = c(2:length(table_caption))) |>
+  align(part = "header", i = c(1:length(table_caption)), align = "left") |>
+  border(part = "head", i = c(1:length(table_caption)),
+         border = list("width" = 0, color = "black", style = "solid")) |>
+  set_table_properties(align = "left", layout = "autofit") |>
+  line_spacing(space = 0.8, part = "all") |>
+  paginate(init = FALSE, hdr_ftr = TRUE)
+table
+
+rm(table, lb_df, table_caption)
+```
