@@ -4,7 +4,7 @@
 
 ### Supplementary Code for:
 ### Some Assembly Required: Unpacking the Content and Spread of Wayfair Conspiracy Theory on Reddit and Twitter
-#### Authors: [Dror Walter](https://cas.gsu.edu/profile/dror-walter/), [Ayse D. Lokmanoglu, PhD](https://aysedeniz09.github.io/); [Yotam Ophir, PhD](https://ophiryotam.com/); and [Eduard Fabregat, PhD](https://scholar.google.com/citations?user=QSTQ3TAAAAAJ&hl=en)
+#### Authors: [Dror Walter, PhD](https://cas.gsu.edu/profile/dror-walter/), [Ayse D. Lokmanoglu, PhD](https://aysedeniz09.github.io/); [Yotam Ophir, PhD](https://ophiryotam.com/); and [Eduard Fabregat, PhD](https://scholar.google.com/citations?user=QSTQ3TAAAAAJ&hl=en)
 #### New Media and Society, 2025
 #### <http://dx.doi.org/10.1177/14614448251341497>
 
