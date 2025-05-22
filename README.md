@@ -18,13 +18,11 @@ This repository contains the data and code used for the analysis and visualizati
 The R source code is located in the [`code/`](code/) directory:
 
 - **Main Analysis**
-  - [Main Text R Markdown Code](code/wayfair_github.Rmd)  
-    · [Main Text Rendered Version](wayfair_github.md)  
+  - [Main Text Rendered Version](wayfair_github.md)  
     · Includes topic modeling, ANTMN clustering, time series analysis, and IRF plots.
 
 - **Supplementary Materials**
-  - [Online Supplement R Markdown Code](code/wayfair-online-supplement-github.Rmd)  
-    · [Online Supplement Rendered Version](wayfair-online-supplement-github.md)  
+  - [Online Supplement Rendered Version](wayfair-online-supplement-github.md 
     · Includes cross-validation, full VAR coefficients, and additional figures.  
     · All figures use `eval = FALSE` to provide code without rendering.
 
