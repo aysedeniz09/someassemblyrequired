@@ -408,9 +408,7 @@ This section extracts:
 Each is saved as an `.xlsx`
 
 ```{r}
- file for interpretation and documentation.
 
-```r
 LDAlist <- mymodels
 datacolnum <- which(colnames(data3) == "text")
 projectname <- "Wayfair_MODEL"
